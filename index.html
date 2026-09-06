@@ -176,6 +176,7 @@ main{flex:1;padding:8px 12px;padding-bottom:20px}
   <div class="pp-menu">
     <button class="pp-navbtn" onclick="openSection('giornata')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 15 11 17 15 13"/></svg><span class="lbl">La mia giornata</span><span class="chev">&rsaquo;</span></button>
     <button class="pp-navbtn" onclick="openSection('dispo')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="lbl">Disponibilit&agrave;</span><span class="chev">&rsaquo;</span></button>
+    <button class="pp-navbtn" onclick="openSection('agenda')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg><span class="lbl">Agenda</span><span class="chev">&rsaquo;</span></button>
     <div class="pp-divider"></div>
     <button class="pp-navbtn" onclick="openSection('sync')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span class="lbl">Sincronizza Google</span><span class="chev">&rsaquo;</span></button>
     <div class="pp-divider"></div>
@@ -262,7 +263,7 @@ main{flex:1;padding:8px 12px;padding-bottom:20px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const CLIENT_ID='267543971233-fsb8goidid2r97ddgii7lvn0ntl9fjnr.apps.googleusercontent.com';
-const SCOPE='https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar';
+const SCOPE='https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks';
 const MONTHS=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 const MONTHS_SHORT=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
 let pianos=[],contatti=[],lastSync=null,gToken=null;
@@ -286,7 +287,10 @@ function load(){
     if(tok){
       gToken=tok;lsSet('pf_gtoken',tok);
       history.replaceState(null,'',window.location.pathname);
-      setTimeout(()=>{openSection('sync');syncContatti();},500);
+      // Si torna dove si era prima di andare da Google: chi apriva l'Agenda
+      // vuole l'Agenda, non la sincronizzazione dei contatti.
+      const dove=lsGet('pf_dopo_auth')||'sync'; lsDel('pf_dopo_auth');
+      setTimeout(()=>{openSection(dove); if(dove==='sync') syncContatti();},500);
     }
   }
 }
@@ -300,10 +304,12 @@ function showTab(t){
   if(t==='preventivi'){mc.style.display='none';ap.style.display='block';am.style.display='none';}
   else if(t==='matricole'){mc.style.display='none';ap.style.display='none';am.style.display='block';cercaMatricola();}
   else{mc.style.display='block';ap.style.display='none';am.style.display='none';render();}
+  if(t==='agenda'&&gToken){ caricaAgenda(false); caricaAttivita(false); }
 }
 function render(){
   const m=document.getElementById('main-content');
   if(currentTab==='giornata')m.innerHTML=renderGiornata();
+  else if(currentTab==='agenda')m.innerHTML=renderAgenda();
   else if(currentTab==='dispo')m.innerHTML=renderDisponibilita();
   else if(currentTab==='sync')m.innerHTML=renderSync();
   else if(currentTab==='contratti')m.innerHTML=renderContratti();
@@ -311,8 +317,9 @@ function render(){
 }
 
 function googleAuth(){
+  lsSet('pf_dopo_auth', currentTab||'sync');
   const redirectUri=window.location.origin+window.location.pathname;
-  const params=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:redirectUri,response_type:'token',scope:SCOPE,prompt:'consent'});
+  const params=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:redirectUri,response_type:'token',scope:SCOPE,include_granted_scopes:'true'});
   window.location.href='https://accounts.google.com/o/oauth2/v2/auth?'+params.toString();
 }
 
@@ -1620,7 +1627,7 @@ function generaRiparazione(){
 
 /* ===== Navigazione launcher ===== */
 function openSection(t){
-  var titles={sync:'Sincronizza Google',preventivi:'Preventivi',contratti:'Contratti',concerti:'Concerti',matricole:'Ricerca Matricole',giornata:'La mia giornata',dispo:'Disponibilità'};
+  var titles={sync:'Sincronizza Google',preventivi:'Preventivi',contratti:'Contratti',concerti:'Concerti',matricole:'Ricerca Matricole',giornata:'La mia giornata',dispo:'Disponibilità',agenda:'Agenda'};
   var st=document.getElementById('pp-sectitle'); if(st) st.textContent=titles[t]||'';
   document.getElementById('pp-home').style.display='none';
   document.getElementById('pp-viewer').style.display='flex';
@@ -2075,6 +2082,619 @@ async function dipCaricaPianoforti(){
   }).catch(function(){});
 })();
 
+
+/* ================= AGENDA, DA FARE E APPOGGI =================
+   La stessa Agenda del gestionale, portata qui pari pari: gli stessi calendari,
+   lo stesso modulo, le stesse attivita' di Google Tasks. Le due app pero' stanno
+   su indirizzi diversi, quindi ognuna ha il suo collegamento a Google e la sua
+   copia locale: quello che si scrive qui finisce comunque su Google, e da li'
+   torna anche nell'altra. Sotto ci sono le poche cose che l'Agenda dava per
+   scontate nel gestionale e che qui non c'erano. */
+
+// Google vuole la data di fine ESCLUSIVA: per un evento di un giorno solo la fine
+// e' il giorno dopo. Scrivendo fine = inizio l'evento dura zero e i calendari non
+// lo disegnano.
+function pfGiornoDopo(d){
+  if(!d) return d;
+  var p=String(d).split('-');
+  if(p.length!==3) return d;
+  var dt=new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+  dt.setUTCDate(dt.getUTCDate()+1);
+  return dt.toISOString().slice(0,10);
+}
+
+// Il permesso di Google dura circa un'ora. Quando scade, invece di lasciare un
+// errore per aria si rimanda al collegamento: e' l'unico modo per non far
+// sembrare rotta l'app.
+function handleGoogleAuthError(data){
+  if(data&&data.error&&(data.error.code===401||/invalid authentication credentials/i.test(data.error.message||''))){
+    gToken=null;lsDel('pf_gtoken');
+    googleAuth();
+    return true;
+  }
+  return false;
+}
+
+const GIORNI_SETT=['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];
+function prossimiEtichettaGiorno(d){
+  const oggi=new Date(); oggi.setHours(0,0,0,0);
+  const diff=Math.round((new Date(d.getFullYear(),d.getMonth(),d.getDate())-oggi)/86400000);
+  const testa=diff===0?'Oggi':(diff===1?'Domani':GIORNI_SETT[d.getDay()]);
+  return testa+' '+d.getDate()+' '+MONTHS_SHORT[d.getMonth()];
+}
+
+/* ================= DA FARE (Google Tasks) =================
+   Le cose in sospeso stanno sopra la giornata, dentro Agenda: si vedono senza
+   cercarle, e la barra si chiude quando danno fastidio. Vengono da Google Tasks,
+   che NON e' il calendario: gli eventi e le attivita' sono due mondi diversi e
+   l'API del calendario le attivita' non le restituisce, per questo serve una
+   chiamata a parte e un permesso a parte. Il quadratino le chiude davvero su
+   Google; "in agenda" apre il modulo dell'Agenda gia' compilato, cosi' una
+   pendenza diventa un impegno con una data. */
+let taskListe=[];
+let taskAttivita=[];
+let taskCaricateAlle=0;
+let taskAperto=true;
+let taskTutte=false;
+let taskPermesso=true;
+let taskMotivo='';
+const TASK_COLORI=['#3F51B5','#0F9D58','#C8791A','#8E24AA','#039BE5','#D81B60'];
+const TASK_QUANTE=4;
+
+function taskColore(listId){
+  for(var i=0;i<taskListe.length;i++){ if(taskListe[i].id===listId) return TASK_COLORI[i%TASK_COLORI.length]; }
+  return '#bbb';
+}
+function taskNomeLista(listId){
+  for(var i=0;i<taskListe.length;i++){ if(taskListe[i].id===listId) return taskListe[i].titolo; }
+  return '';
+}
+
+// Una scadenza vecchia di quattro anni non e' "in ritardo": e' un relitto. Dirlo
+// a chiare lettere serve, nasconderlo no.
+function taskScadenza(due){
+  if(!due) return '';
+  var d=new Date(due); if(isNaN(d.getTime())) return '';
+  var oggi=new Date(); oggi.setHours(0,0,0,0);
+  var g=Math.round((new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())-oggi)/86400000);
+  if(g>1) return {testo:'fra '+g+' giorni',vecchia:false};
+  if(g===1) return {testo:'domani',vecchia:false};
+  if(g===0) return {testo:'oggi',vecchia:false};
+  var r=-g;
+  if(r>=365) { var a=Math.floor(r/365); return {testo:'scaduta da '+a+(a===1?' anno':' anni'),vecchia:true}; }
+  if(r>=30) { var m=Math.floor(r/30); return {testo:'scaduta da '+m+(m===1?' mese':' mesi'),vecchia:true}; }
+  return {testo:'scaduta da '+r+(r===1?' giorno':' giorni'),vecchia:true};
+}
+
+async function caricaAttivita(forza){
+  if(!gToken) return;
+  if(!forza && taskAttivita.length && (Date.now()-taskCaricateAlle)<180000) return;
+  try{
+    const res=await fetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists?maxResults=50',{headers:{Authorization:'Bearer '+gToken}});
+    const data=await res.json();
+    // 403 = il token e' buono ma non copre le attivita': e' il permesso nuovo,
+    // va chiesto una volta sola e con un bottone, non con un salto improvviso.
+    if(res.status===403||(data.error&&data.error.code===403)){ taskPermesso=false; taskMotivo=(data.error&&data.error.message)||''; render(); return; }
+    if(handleGoogleAuthError(data))return;
+    if(data.error) throw new Error(data.error.message);
+    taskPermesso=true;
+    taskListe=(data.items||[]).map(function(l){ return {id:l.id,titolo:l.title||''}; });
+    const tutte=[];
+    for(const lista of taskListe){
+      const u='https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(lista.id)+'/tasks?showCompleted=false&showHidden=false&maxResults=100';
+      const r2=await fetch(u,{headers:{Authorization:'Bearer '+gToken}});
+      const d2=await r2.json();
+      if(d2.error) continue;
+      (d2.items||[]).forEach(function(t){
+        if(t.status==='completed') return;
+        if(!t.title||!t.title.trim()) return;
+        tutte.push({id:t.id,listId:lista.id,titolo:t.title.trim(),note:t.notes||'',due:t.due||'',pos:t.position||''});
+      });
+    }
+    // Prima quelle con una data (le piu' vecchie in cima), poi quelle senza.
+    tutte.sort(function(a,b){
+      if(a.due&&b.due) return a.due.localeCompare(b.due);
+      if(a.due) return -1;
+      if(b.due) return 1;
+      return 0;
+    });
+    taskAttivita=tutte;
+    taskCaricateAlle=Date.now();
+    lsSet('pf_task',{liste:taskListe,attivita:taskAttivita});
+    render();
+  }catch(err){ /* silenzio: il blocco semplicemente non compare */ }
+}
+
+function renderDaFare(){
+  if(!gToken) return '';
+  if(!taskPermesso){
+    // Due rifiuti diversi si somigliano: "non mi hai dato il permesso" si aggiusta
+    // con un consenso, "la Tasks API del progetto e' spenta" no, e un bottone
+    // Consenti manderebbe solo in giro a vuoto. Il messaggio vero di Google resta
+    // scritto sotto in piccolo, cosi' anche un terzo caso si riconosce.
+    var spenta=/has not been used|is disabled|accessNotConfigured|SERVICE_DISABLED/i.test(taskMotivo||'');
+    var testo=spenta
+      ? 'Le attivita\' non arrivano: nel progetto Google la Tasks API risulta spenta.'
+      : 'Per vedere qui le cose in sospeso serve il permesso alle attivita\' di Google.';
+    return '<div class="card" style="padding:11px 12px;margin-bottom:10px">'
+     +'<div style="display:flex;align-items:center;gap:10px">'
+     +'<div style="flex:1;font-size:12px;color:#888">'+testo+'</div>'
+     +(spenta?'':'<button onclick="googleAuth()" style="border:0.5px solid #A01020;background:#fff;color:#A01020;border-radius:8px;font-size:11.5px;font-weight:600;padding:6px 10px;cursor:pointer;white-space:nowrap">Consenti</button>')
+     +'</div>'
+     +(taskMotivo?'<div style="font-size:10px;color:#bbb;margin-top:6px;word-break:break-word">'+agEsc(taskMotivo).slice(0,220)+'</div>':'')
+     +'</div>';
+  }
+  if(!taskListe.length&&!taskAttivita.length) return '';
+  let h='<div onclick="taskToggleBlocco()" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px">'
+   +'<span style="font-size:11px;font-weight:700;letter-spacing:.1em;color:#8a8a8a;flex:1">DA FARE</span>'
+   +(taskAttivita.length?'<span style="background:#A01020;color:#fff;border-radius:9px;font-size:10px;font-weight:700;padding:1px 7px">'+taskAttivita.length+'</span>':'')
+   +'<button onclick="event.stopPropagation();taskNuovo()" title="Nuova attivita\'" style="border:0.5px solid #e0e0e0;background:#fff;color:#A01020;border-radius:8px;font-size:11px;font-weight:700;padding:3px 9px;cursor:pointer;font-family:inherit">+</button>'
+   +'<span style="color:#bbb;font-size:13px">'+(taskAperto?'&#9662;':'&#9656;')+'</span></div>';
+  if(!taskAperto) return h;
+  if(!taskAttivita.length) return h+'<div style="text-align:center;font-size:11.5px;color:#aaa;padding:2px 0 10px">niente in sospeso</div>';
+
+  const quante=taskTutte?taskAttivita.length:Math.min(TASK_QUANTE,taskAttivita.length);
+  for(let i=0;i<quante;i++){
+    const t=taskAttivita[i];
+    const s=taskScadenza(t.due);
+    h+='<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 10px;background:#fff;border:0.5px solid #e0e0e0;border-radius:11px;margin-bottom:7px">'
+     +'<div onclick="taskCompleta('+i+')" title="Segna come fatta" style="width:16px;height:16px;border:1.5px solid #c9c9c9;border-radius:4px;flex-shrink:0;margin-top:1px;cursor:pointer"></div>'
+     +'<div onclick="taskApri('+i+')" style="flex:1;min-width:0;cursor:pointer">'
+     +'<div style="font-size:12.5px;line-height:1.3">'+agEsc(t.titolo)+'</div>'
+     +'<div style="font-size:10px;color:#aaa;margin-top:3px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+     +'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+taskColore(t.listId)+';flex-shrink:0"></span>'
+     +agEsc(taskNomeLista(t.listId))
+     +(s?' &middot; <span style="color:'+(s.vecchia?'#C8791A':'#888')+'">'+s.testo+'</span>':'')
+     +'</div></div>'
+     +'<button onclick="taskInAgenda('+i+')" style="border:0.5px solid #e0e0e0;background:#fafafa;color:#A01020;border-radius:8px;font-size:10.5px;font-weight:600;padding:5px 8px;white-space:nowrap;cursor:pointer;font-family:inherit;flex-shrink:0;align-self:center">in agenda</button>'
+     +'</div>';
+  }
+  if(taskAttivita.length>quante){
+    h+='<div onclick="taskTutte=true;render()" style="text-align:center;font-size:11px;color:#aaa;padding:4px 0 2px;cursor:pointer">altre '+(taskAttivita.length-quante)+'</div>';
+  }else if(taskTutte&&taskAttivita.length>TASK_QUANTE){
+    h+='<div onclick="taskTutte=false;render()" style="text-align:center;font-size:11px;color:#aaa;padding:4px 0 2px;cursor:pointer">mostra meno</div>';
+  }
+  return h;
+}
+
+function taskToggleBlocco(){ taskAperto=!taskAperto; lsSet('pf_task_aperto',taskAperto?'1':'0'); render(); }
+
+async function taskCompleta(i){
+  const t=taskAttivita[i]; if(!t||!gToken) return;
+  // Sparisce subito dall'elenco: se Google dice di no, torna al suo posto.
+  taskAttivita.splice(i,1); render();
+  try{
+    const u='https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(t.listId)+'/tasks/'+encodeURIComponent(t.id);
+    const res=await fetch(u,{method:'PATCH',headers:{Authorization:'Bearer '+gToken,'Content-Type':'application/json'},body:JSON.stringify({status:'completed'})});
+    const data=await res.json();
+    if(data.error) throw new Error(data.error.message);
+    lsSet('pf_task',{liste:taskListe,attivita:taskAttivita});
+  }catch(err){
+    taskAttivita.splice(i,0,t); render();
+    alert('Non sono riuscito a chiuderla: '+err.message);
+  }
+}
+
+// Il titolo e le note dell'attivita' entrano nell'evento: sulle fatture le note
+// contengono CIG, determina e codice univoco, ed e' roba che serve averci dentro.
+function taskInAgenda(i){
+  const t=taskAttivita[i]; if(!t) return;
+  agForm=agFormVuoto();
+  agForm.titolo=t.titolo;
+  agForm.note=t.note||'';
+  if(t.due){ const d=new Date(t.due); if(!isNaN(d.getTime())){ const s=d.toISOString().slice(0,10); if(s>=agOggi()) agForm.data=s; } }
+  render();
+}
+
+/* Il passaggio nei due sensi: come per gli eventi, un'attivita' si crea, si
+   corregge e si cancella da qui, e su Google si vede subito. Cambiare lista
+   vuol dire in realta' rifarla nell'altra e togliere la vecchia - Google non
+   sa spostarle - ma da fuori si vede solo l'attivita' che cambia posto. */
+let taskForm=null;
+
+function taskFormVuoto(){
+  const pref=lsGet('pf_task_ultima_lista');
+  const lista=(pref&&taskNomeLista(pref))?pref:((taskListe[0]&&taskListe[0].id)||'');
+  return {modo:'nuovo',listId:lista,listOrig:'',id:'',titolo:'',note:'',data:''};
+}
+function taskNuovo(){ if(!taskListe.length){alert('Nessuna lista di attivita\' trovata su Google');return;} taskForm=taskFormVuoto(); render(); }
+function taskApri(i){
+  const t=taskAttivita[i]; if(!t) return;
+  let data='';
+  if(t.due){ const d=new Date(t.due); if(!isNaN(d.getTime())) data=d.toISOString().slice(0,10); }
+  taskForm={modo:'modifica',listId:t.listId,listOrig:t.listId,id:t.id,titolo:t.titolo,note:t.note||'',data:data,indice:i};
+  render();
+}
+function taskScegliLista(i){ if(taskListe[i]&&taskForm){ taskForm.listId=taskListe[i].id; render(); } }
+
+function renderTaskForm(){
+  const f=taskForm;
+  let h='<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">'
+   +'<button onclick="taskForm=null;render()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px">&larr;</button>'
+   +'<div style="font-size:15px;font-weight:500">'+(f.modo==='nuovo'?'Nuova attivita\'':'Modifica attivita\'')+'</div></div>';
+
+  h+='<div class="section-title">Elenco</div>';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px">'+taskListe.map(function(l,i){
+    const sel=f.listId===l.id;
+    const c=TASK_COLORI[i%TASK_COLORI.length];
+    return '<button onclick="taskScegliLista('+i+')" style="display:flex;align-items:center;gap:6px;border:'+(sel?'1.5px':'0.5px')+' solid '+(sel?c:'#e0e0e0')+';background:'+(sel?c+'1f':'#fff')+';border-radius:14px;padding:6px 12px;font-size:12px;cursor:pointer">'
+      +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>'+agEsc(l.titolo)+'</button>';
+  }).join('')+'</div>';
+
+  h+='<div class="section-title">Cosa</div>';
+  h+=campoInput('Titolo',f.titolo,'taskForm.titolo=this.value');
+  h+=campoInput('Scadenza (facoltativa)',f.data,'taskForm.data=this.value','date');
+  h+='<div style="margin-top:10px"><div style="font-size:12px;color:#888;margin-bottom:4px">Dettagli</div>'
+   +'<textarea onchange="taskForm.note=this.value" style="width:100%;min-height:70px;border:0.5px solid #e0e0e0;border-radius:8px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">'+agEsc(f.note)+'</textarea></div>';
+
+  h+='<button class="btn-primary" id="btn-salva-task" onclick="taskSalva()" style="margin-top:14px">'+(f.modo==='nuovo'?'Aggiungi alle attivita\'':'Salva le modifiche')+'</button>';
+  if(f.modo==='modifica'){
+    h+='<button onclick="taskElimina()" style="width:100%;margin-top:8px;background:none;border:0.5px solid #e0e0e0;border-radius:8px;padding:10px;font-size:13px;color:#A32D2D;cursor:pointer">Elimina l\'attivita\'</button>';
+  }
+  return h+'</div>';
+}
+
+function taskCorpo(f){
+  const c={title:f.titolo,notes:f.note||''};
+  if(f.data) c.due=f.data+'T00:00:00.000Z';
+  return c;
+}
+
+async function taskSalva(){
+  if(!gToken){googleAuth();return;}
+  const f=taskForm;
+  if(!f.titolo||!f.titolo.trim()){alert('Serve almeno il titolo');return;}
+  const btn=document.getElementById('btn-salva-task');
+  if(btn){btn.disabled=true;btn.textContent='Salvataggio...';}
+  try{
+    const corpo=taskCorpo(f);
+    if(f.modo==='modifica'&&f.listOrig&&f.listOrig!==f.listId){
+      // Google non sposta un'attivita' da una lista all'altra: la si rifa' di la'
+      // e si toglie di qua.
+      const c1=await fetch('https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(f.listId)+'/tasks',{method:'POST',headers:{Authorization:'Bearer '+gToken,'Content-Type':'application/json'},body:JSON.stringify(corpo)});
+      const d1=await c1.json();
+      if(handleGoogleAuthError(d1))return;
+      if(d1.error) throw new Error(d1.error.message);
+      await fetch('https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(f.listOrig)+'/tasks/'+encodeURIComponent(f.id),{method:'DELETE',headers:{Authorization:'Bearer '+gToken}});
+    }else{
+      const url=(f.modo==='nuovo')
+        ? 'https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(f.listId)+'/tasks'
+        : 'https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(f.listId)+'/tasks/'+encodeURIComponent(f.id);
+      const res=await fetch(url,{method:(f.modo==='nuovo'?'POST':'PATCH'),headers:{Authorization:'Bearer '+gToken,'Content-Type':'application/json'},body:JSON.stringify(corpo)});
+      const data=await res.json();
+      if(handleGoogleAuthError(data))return;
+      if(data.error) throw new Error(data.error.message);
+    }
+    lsSet('pf_task_ultima_lista',f.listId);
+    taskForm=null;
+    await caricaAttivita(true);
+  }catch(err){
+    alert('Errore: '+err.message);
+    if(btn){btn.disabled=false;btn.textContent='Aggiungi alle attivita\'';}
+  }
+}
+
+async function taskElimina(){
+  if(!taskForm||taskForm.modo!=='modifica') return;
+  if(!confirm('Eliminare "'+taskForm.titolo+'"?')) return;
+  try{
+    const res=await fetch('https://tasks.googleapis.com/tasks/v1/lists/'+encodeURIComponent(taskForm.listOrig||taskForm.listId)+'/tasks/'+encodeURIComponent(taskForm.id),{method:'DELETE',headers:{Authorization:'Bearer '+gToken}});
+    if(res.status!==204&&res.status!==200){
+      const data=await res.json().catch(function(){return {};});
+      if(handleGoogleAuthError(data))return;
+      throw new Error((data.error&&data.error.message)||('errore '+res.status));
+    }
+    taskForm=null;
+    await caricaAttivita(true);
+  }catch(err){ alert('Errore: '+err.message); }
+}
+
+/* ================= AGENDA =================
+   Il calendario di amministrazione non e' uno solo: e' il negozio (blu), Andrea
+   (verde), Rodolfo (ocra), l'UFFICIO (viola), gli Aiutanti Collaboratori. Qui
+   dentro ci sono tutti, con il loro colore vero preso da Google, e ci si scrive
+   dentro: si sceglie il calendario, il giorno, l'ora oppure tutto il giorno, e
+   l'evento nasce su Google. Quello che si scrive qui si vede la', quello che si
+   scrive la' si vede qui. Le voci gia' in calendario si aprono, si correggono e
+   si cancellano da qui, e si possono anche spostare da un calendario all'altro. */
+let agCalendari=[];
+let agEventi=[];
+let agCaricatoAlle=0;
+let agNascosti={};
+let agMostraPassati=false;
+let agForm=null;
+let agRigheCache=[];
+const AG_INDIETRO=30, AG_AVANTI=180;
+
+function agEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function agCal(id){for(var i=0;i<agCalendari.length;i++){if(agCalendari[i].id===id)return agCalendari[i];}return null;}
+function agColore(id){var c=agCal(id);return c?c.colore:'#bbb';}
+function agNome(id){var c=agCal(id);return c?c.nome:id;}
+function agOggi(){var d=new Date();return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);}
+function agPallino(id){return '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+agColore(id)+';flex-shrink:0"></span>';}
+
+async function agCaricaCalendari(){
+  const res=await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList',{headers:{Authorization:'Bearer '+gToken}});
+  const data=await res.json();
+  if(handleGoogleAuthError(data))return false;
+  if(data.error) throw new Error(data.error.message);
+  agCalendari=(data.items||[]).map(function(c){
+    return {id:c.id,nome:c.summaryOverride||c.summary||c.id,colore:c.backgroundColor||'#A01020',
+            scrivibile:(c.accessRole==='owner'||c.accessRole==='writer'),primario:!!c.primary};
+  });
+  lsSet('pf_calendari',agCalendari);
+  return true;
+}
+
+async function caricaAgenda(forza){
+  if(!gToken){googleAuth();return;}
+  if(!forza && agEventi.length && (Date.now()-agCaricatoAlle)<180000) return;
+  const st=document.getElementById('agenda-status');
+  if(st) st.innerHTML='<span class="spinner"></span>Carico...';
+  try{
+    if(!(await agCaricaCalendari())) return;
+    const da=new Date(); da.setHours(0,0,0,0); da.setDate(da.getDate()-AG_INDIETRO);
+    const a=new Date(); a.setHours(0,0,0,0); a.setDate(a.getDate()+AG_AVANTI);
+    const tutti=[];
+    for(const cal of agCalendari){
+      let pageToken='';
+      do{
+        const url='https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(cal.id)+'/events?timeMin='+encodeURIComponent(da.toISOString())+'&timeMax='+encodeURIComponent(a.toISOString())+'&singleEvents=true&orderBy=startTime&maxResults=250'+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
+        const res=await fetch(url,{headers:{Authorization:'Bearer '+gToken}});
+        const data=await res.json();
+        if(handleGoogleAuthError(data))return;
+        if(data.error) break;
+        (data.items||[]).forEach(function(e){ e.__calId=cal.id; tutti.push(e); });
+        pageToken=data.nextPageToken||'';
+      }while(pageToken);
+    }
+    agEventi=tutti;
+    agCaricatoAlle=Date.now();
+    lsSet('pf_agenda',tutti);
+    render();
+  }catch(err){ if(st) st.innerHTML='<span style="color:#A32D2D">Errore: '+err.message+'</span>'; }
+}
+
+function agRighe(){
+  const oggi=new Date(); oggi.setHours(0,0,0,0);
+  const out=[];
+  agEventi.forEach(function(e){
+    if(agNascosti[e.__calId]) return;
+    if(e.status==='cancelled') return;
+    const gi=!!(e.start&&e.start.date);
+    const iso=(e.start&&(e.start.dateTime||e.start.date))||'';
+    if(!iso) return;
+    const q=gi?new Date(+iso.substring(0,4),+iso.substring(5,7)-1,+iso.substring(8,10)):new Date(iso);
+    if(!agMostraPassati && q<oggi) return;
+    out.push({id:e.id,calId:e.__calId,titolo:e.summary||'(senza titolo)',luogo:e.location||'',
+              note:e.description||'',quando:q,giornoIntero:gi,ev:e});
+  });
+  out.sort(function(x,y){return x.quando-y.quando;});
+  return out;
+}
+
+function agChips(){
+  if(!agCalendari.length) return '';
+  return '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+agCalendari.map(function(c,i){
+    const on=!agNascosti[c.id];
+    return '<button onclick="agToggleCal('+i+')" style="display:flex;align-items:center;gap:5px;border:0.5px solid '+(on?c.colore:'#e0e0e0')+';background:'+(on?c.colore+'14':'#fff')+';color:'+(on?'#1a1a1a':'#bbb')+';border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer">'
+      +'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+(on?c.colore:'#ddd')+'"></span>'+agEsc(c.nome)+'</button>';
+  }).join('')+'</div>';
+}
+function agToggleCal(i){
+  const c=agCalendari[i]; if(!c) return;
+  if(agNascosti[c.id]) delete agNascosti[c.id]; else agNascosti[c.id]=true;
+  lsSet('pf_agenda_nascosti',agNascosti);
+  render();
+}
+
+function renderAgenda(){
+  if(!agCalendari.length){ try{const d=lsGet('pf_calendari'); if(d) agCalendari=JSON.parse(d);}catch(e){} }
+  if(!agEventi.length){ try{const d=lsGet('pf_agenda'); if(d) agEventi=JSON.parse(d);}catch(e){} }
+  try{const d=lsGet('pf_agenda_nascosti'); if(d) agNascosti=JSON.parse(d);}catch(e){}
+  if(!taskAttivita.length){ try{const d=lsGet('pf_task'); if(d){ const o=JSON.parse(d); taskListe=o.liste||[]; taskAttivita=o.attivita||[]; } }catch(e){} }
+  try{const d=lsGet('pf_task_aperto'); if(d!==null&&d!==undefined) taskAperto=(d!=='0');}catch(e){}
+  if(agForm) return renderAgendaForm();
+  if(taskForm) return renderTaskForm();
+
+  let h='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+   + '<div style="flex:1;font-size:12px;color:#888">Tutti i calendari in un elenco solo. Tocca una voce per correggerla.</div>'
+   + '<button onclick="caricaAgenda(true)" style="background:none;border:0.5px solid #e0e0e0;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;color:#888">Aggiorna</button></div>';
+  h+='<div id="agenda-status" style="font-size:12px;color:#888;margin-bottom:8px"></div>';
+  if(!gToken) return h+'<div class="card" style="text-align:center"><div style="font-size:13px;color:#888;margin-bottom:10px">L&rsquo;agenda vive su Google: serve il collegamento.</div><button class="btn-primary" onclick="googleAuth()">Collega Google</button></div>';
+
+  h+=renderDaFare();
+  h+='<button class="btn-primary" onclick="agNuovo()" style="margin-bottom:12px">+ Nuovo impegno</button>';
+  h+=agChips();
+  h+='<div style="font-size:11px;color:#aaa;margin-bottom:10px"><label style="cursor:pointer"><input type="checkbox" '+(agMostraPassati?'checked':'')+' onchange="agMostraPassati=this.checked;render()" style="vertical-align:middle;margin-right:4px"/>mostra anche i giorni passati</label></div>';
+
+  agRigheCache=agRighe();
+  if(!agRigheCache.length) return h+'<div class="card" style="text-align:center;font-size:13px;color:#888">Nessun impegno da qui in avanti</div>';
+
+  let giorno='';
+  agRigheCache.forEach(function(r,i){
+    const g=r.quando.toDateString();
+    if(g!==giorno){ giorno=g; h+='<div class="section-title" style="margin:14px 0 6px">'+prossimiEtichettaGiorno(r.quando)+'</div>'; }
+    const ora=r.giornoIntero?'tutto il giorno':(('0'+r.quando.getHours()).slice(-2)+':'+('0'+r.quando.getMinutes()).slice(-2));
+    h+='<div class="card" style="padding:10px 12px;margin-bottom:8px;cursor:pointer;border-left:3px solid '+agColore(r.calId)+'" onclick="agApri('+i+')">';
+    h+='<div style="display:flex;gap:10px;align-items:baseline">';
+    h+='<b style="color:#A01020;font-size:12px;min-width:74px;display:inline-block">'+ora+'</b>';
+    h+='<div style="flex:1">';
+    h+='<div style="font-size:14px;font-weight:500;color:#1a1a1a">'+agEsc(r.titolo)+'</div>';
+    if(r.luogo) h+='<div style="margin-top:4px;font-size:12px;color:#888">'+agEsc(r.luogo)+'</div>';
+    h+='<div style="margin-top:4px;font-size:11px;color:#aaa;display:flex;align-items:center;gap:5px">'+agPallino(r.calId)+agEsc(agNome(r.calId))+'</div>';
+    h+='</div></div></div>';
+  });
+  return h;
+}
+
+function agFormVuoto(){
+  const scrivibili=agCalendari.filter(function(c){return c.scrivibile;});
+  const pref=lsGet('pf_agenda_ultimo_cal');
+  const cal=(pref&&agCal(pref)&&agCal(pref).scrivibile)?pref:((scrivibili[0]&&scrivibili[0].id)||'primary');
+  return {modo:'nuovo',calendarId:cal,calOrig:'',id:'',titolo:'',data:agOggi(),dataFine:'',
+          tuttoIlGiorno:true,oraInizio:'09:00',oraFine:'10:00',luogo:'',note:''};
+}
+function agNuovo(){ agForm=agFormVuoto(); render(); }
+
+function agApri(i){
+  const r=agRigheCache[i]; if(!r) return;
+  const e=r.ev;
+  const gi=!!(e.start&&e.start.date);
+  let data='',dataFine='',oraI='',oraF='';
+  if(gi){
+    data=e.start.date.substring(0,10);
+    // Google tiene la fine esclusiva: l'ultimo giorno vero e' quello prima.
+    const f=e.end&&e.end.date?e.end.date.substring(0,10):'';
+    if(f){ const d=new Date(f+'T00:00:00'); d.setDate(d.getDate()-1);
+      const s=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+      if(s!==data && s>data) dataFine=s; }
+  }else{
+    const si=e.start.dateTime, fi=(e.end&&e.end.dateTime)||'';
+    const sd=new Date(si);
+    data=sd.getFullYear()+'-'+('0'+(sd.getMonth()+1)).slice(-2)+'-'+('0'+sd.getDate()).slice(-2);
+    oraI=('0'+sd.getHours()).slice(-2)+':'+('0'+sd.getMinutes()).slice(-2);
+    if(fi){ const fd=new Date(fi);
+      oraF=('0'+fd.getHours()).slice(-2)+':'+('0'+fd.getMinutes()).slice(-2);
+      const fs=fd.getFullYear()+'-'+('0'+(fd.getMonth()+1)).slice(-2)+'-'+('0'+fd.getDate()).slice(-2);
+      if(fs!==data) dataFine=fs;
+    }
+  }
+  agForm={modo:'modifica',calendarId:r.calId,calOrig:r.calId,id:r.id,titolo:e.summary||'',data:data,dataFine:dataFine,
+          tuttoIlGiorno:gi,oraInizio:oraI||'09:00',oraFine:oraF||'10:00',luogo:e.location||'',note:e.description||''};
+  render();
+}
+
+function renderAgendaForm(){
+  const f=agForm;
+  const scrivibili=agCalendari.filter(function(c){return c.scrivibile;});
+  let h='<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">'
+   +'<button onclick="agForm=null;render()" style="background:none;border:none;cursor:pointer;color:#888;font-size:20px">&larr;</button>'
+   +'<div style="font-size:15px;font-weight:500">'+(f.modo==='nuovo'?'Nuovo impegno':'Modifica impegno')+'</div></div>';
+
+  h+='<div class="section-title">Calendario</div>';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px">'+scrivibili.map(function(c,i){
+    const sel=f.calendarId===c.id;
+    return '<button onclick="agScegliCal('+i+')" style="display:flex;align-items:center;gap:6px;border:'+(sel?'1.5px':'0.5px')+' solid '+(sel?c.colore:'#e0e0e0')+';background:'+(sel?c.colore+'1f':'#fff')+';border-radius:14px;padding:6px 12px;font-size:12px;cursor:pointer">'
+      +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c.colore+'"></span>'+agEsc(c.nome)+'</button>';
+  }).join('')+'</div>';
+
+  h+='<div class="section-title">Quando</div>';
+  h+=campoInput('Data',f.data,'agForm.data=this.value','date');
+  h+='<div class="summary-row"><span>Tutto il giorno</span><input type="checkbox" '+(f.tuttoIlGiorno?'checked':'')+' onchange="agForm.tuttoIlGiorno=this.checked;render()" style="width:18px;height:18px"/></div>';
+  if(!f.tuttoIlGiorno){
+    h+=campoInput('Dalle',f.oraInizio,'agForm.oraInizio=this.value','time');
+    h+=campoInput('Alle',f.oraFine,'agForm.oraFine=this.value','time');
+  }
+  h+=campoInput('Fino al giorno (se dura di piu)',f.dataFine,'agForm.dataFine=this.value','date');
+
+  h+='<div class="section-title" style="margin-top:14px">Cosa</div>';
+  h+=campoInput('Titolo',f.titolo,'agForm.titolo=this.value');
+  const recenti=agTitoliRecenti(f.calendarId);
+  if(recenti.length){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px">'+recenti.map(function(t,i){
+      return '<button onclick="agUsaTitolo('+i+')" style="border:0.5px solid #e0e0e0;background:#fafafa;border-radius:12px;padding:4px 10px;font-size:11px;color:#666;cursor:pointer">'+agEsc(t)+'</button>';
+    }).join('')+'</div>';
+  }
+  h+=campoInput('Luogo',f.luogo,'agForm.luogo=this.value');
+  h+='<div style="margin-top:10px"><div style="font-size:12px;color:#888;margin-bottom:4px">Note</div>'
+   +'<textarea id="ag-note" onchange="agForm.note=this.value" style="width:100%;min-height:70px;border:0.5px solid #e0e0e0;border-radius:8px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">'+agEsc(f.note)+'</textarea></div>';
+
+  h+='<div id="ag-form-status" style="font-size:12px;color:#888;margin:10px 0"></div>';
+  h+='<button class="btn-primary" id="btn-salva-agenda" onclick="agSalva()">'+(f.modo==='nuovo'?'Salva sul calendario':'Salva le modifiche')+'</button>';
+  if(f.modo==='modifica'){
+    h+='<button onclick="agElimina()" style="width:100%;margin-top:8px;background:none;border:0.5px solid #e0e0e0;border-radius:8px;padding:10px;font-size:13px;color:#A32D2D;cursor:pointer">Elimina dal calendario</button>';
+  }
+  return h+'</div>';
+}
+
+function agScegliCal(i){
+  const scrivibili=agCalendari.filter(function(c){return c.scrivibile;});
+  if(scrivibili[i]&&agForm){ agForm.calendarId=scrivibili[i].id; render(); }
+}
+function agUsaTitolo(i){
+  if(!agForm) return;
+  const r=agTitoliRecenti(agForm.calendarId);
+  if(r[i]){ agForm.titolo=r[i]; render(); }
+}
+
+// I titoli gia' usati in quel calendario: nella riga dei collaboratori i nomi
+// tornano sempre gli stessi, e riscriverli ogni volta e' tempo buttato.
+function agTitoliRecenti(calId){
+  const visti=[];
+  agEventi.filter(function(e){return e.__calId===calId&&e.summary;})
+    .sort(function(a,b){return String((b.start&&(b.start.dateTime||b.start.date))||'').localeCompare(String((a.start&&(a.start.dateTime||a.start.date))||''));})
+    .forEach(function(e){ const t=e.summary.trim(); if(t&&visti.indexOf(t)<0&&visti.length<6) visti.push(t); });
+  return visti;
+}
+
+function agCorpoEvento(f){
+  const ev={summary:f.titolo,location:f.luogo||'',description:f.note||''};
+  if(f.tuttoIlGiorno){
+    ev.start={date:f.data};
+    ev.end={date:pfGiornoDopo(f.dataFine&&f.dataFine>f.data?f.dataFine:f.data)};
+  }else{
+    const fine=(f.dataFine&&f.dataFine>f.data)?f.dataFine:f.data;
+    ev.start={dateTime:f.data+'T'+(f.oraInizio||'09:00')+':00',timeZone:'Europe/Rome'};
+    ev.end={dateTime:fine+'T'+(f.oraFine||f.oraInizio||'10:00')+':00',timeZone:'Europe/Rome'};
+  }
+  return ev;
+}
+
+async function agSalva(){
+  if(!gToken){googleAuth();return;}
+  const f=agForm;
+  if(!f.titolo||!f.data){alert('Servono almeno il titolo e la data');return;}
+  if(!f.tuttoIlGiorno && (!f.dataFine||f.dataFine===f.data) && f.oraFine && f.oraFine<=f.oraInizio){
+    alert('L\'ora di fine deve venire dopo quella di inizio');return;
+  }
+  const btn=document.getElementById('btn-salva-agenda');
+  if(btn){btn.disabled=true;btn.textContent='Salvataggio...';}
+  try{
+    const corpo=agCorpoEvento(f);
+    let url,metodo;
+    if(f.modo==='nuovo'){
+      url='https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(f.calendarId)+'/events';
+      metodo='POST';
+    }else{
+      // Se e' cambiato calendario l'evento va prima spostato: l'id resta lo stesso
+      // ma vive in un altro calendario, e la PATCH deve andare a bussare la'.
+      if(f.calOrig&&f.calOrig!==f.calendarId){
+        const mv=await fetch('https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(f.calOrig)+'/events/'+encodeURIComponent(f.id)+'/move?destination='+encodeURIComponent(f.calendarId),{method:'POST',headers:{Authorization:'Bearer '+gToken}});
+        const mvd=await mv.json();
+        if(handleGoogleAuthError(mvd))return;
+        if(mvd.error) throw new Error(mvd.error.message);
+      }
+      url='https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(f.calendarId)+'/events/'+encodeURIComponent(f.id);
+      metodo='PATCH';
+    }
+    const res=await fetch(url,{method:metodo,headers:{Authorization:'Bearer '+gToken,'Content-Type':'application/json'},body:JSON.stringify(corpo)});
+    const data=await res.json();
+    if(handleGoogleAuthError(data))return;
+    if(data.error) throw new Error(data.error.message);
+    lsSet('pf_agenda_ultimo_cal',f.calendarId);
+    agForm=null;
+    await caricaAgenda(true);
+  }catch(err){
+    alert('Errore: '+err.message);
+    if(btn){btn.disabled=false;btn.textContent='Salva sul calendario';}
+  }
+}
+
+async function agElimina(){
+  if(!agForm||agForm.modo!=='modifica') return;
+  if(!confirm('Eliminare "'+agForm.titolo+'" dal calendario '+agNome(agForm.calendarId)+'?')) return;
+  try{
+    const res=await fetch('https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(agForm.calOrig||agForm.calendarId)+'/events/'+encodeURIComponent(agForm.id),{method:'DELETE',headers:{Authorization:'Bearer '+gToken}});
+    if(res.status!==204&&res.status!==200){
+      const data=await res.json().catch(function(){return {};});
+      if(handleGoogleAuthError(data))return;
+      throw new Error((data.error&&data.error.message)||('errore '+res.status));
+    }
+    agForm=null;
+    await caricaAgenda(true);
+  }catch(err){ alert('Errore: '+err.message); }
+}
 load();render();
 </script>
 </body>
