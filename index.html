@@ -1641,16 +1641,21 @@ window.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getE
    la loro giornata e l'elenco degli strumenti. I dati non passano dall'account
    Google di Andrea: arrivano dallo script "Dipendenti PlayPiano", che risponde
    solo a chi ha un codice. Il codice si chiede una volta e resta ricordato.
-   La giornata e' la stessa pagina servita dallo script, mostrata qui dentro:
-   una sola versione da mantenere invece di due che divergono. */
+
+   La giornata e' scritta qui e non incorniciata dallo script: provato, una
+   pagina di Apps Script dentro un iframe di un altro sito resta bianca, perche'
+   il suo sandbox non gira in contesto di terze parti. */
 
 const DIP_API = 'https://script.google.com/macros/s/AKfycbzYWadcOB4XJqHMps3kuDQpg1nGUHbtegYrZLe8GEdPhkH91jTajZh_ZwaWu0kuOMq-Zw/exec';
 
-let dipPin = '', dipNome = '', dipPianoforti = [], dipCerca = '', dipStato = 'N', dipCaricamento = false;
+let dipPin='', dipNome='', dipPianoforti=[], dipCerca='', dipStato='N', dipCaricamento=false;
+let gioData='', gioLavori=[], gioListini=null, gioForm=null, gioSettimana=null, gioCarico=false, gioCaricata='';
 
 function dipEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function dipLeggi(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
 function dipScrivi(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function gioOggi(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function gioOre(min){ min=parseInt(min,10)||0; var h=Math.floor(min/60), m=min%60; return h ? (h+'h'+(m?' '+m+'m':'')) : (m+'m'); }
 
 async function dipChiedi(azione, dati){
   const qp = new URLSearchParams(Object.assign({api:azione}, dati||{}));
@@ -1681,25 +1686,337 @@ async function dipVerificaCodice(){
     if(!r.ok){ m.innerHTML = dipSchermataCodice(r.errore); return; }
     dipPin = pin; dipNome = r.dipendente.nome;
     dipScrivi('pf_pin_dip', pin);
+    gioData = gioOggi(); gioLavori=[]; gioCaricata=''; gioSettimana=null;
     render();
   }catch(e){ m.innerHTML = dipSchermataCodice('Collegamento non riuscito'); }
 }
 
 function dipEsci(){
-  dipPin=''; dipNome=''; dipPianoforti=[];
+  dipPin=''; dipNome=''; dipPianoforti=[]; gioLavori=[]; gioCaricata=''; gioSettimana=null;
   try{ localStorage.removeItem('pf_pin_dip'); }catch(e){}
   render();
 }
 
-/* ---------- la giornata: e' la pagina dello script, mostrata qui ---------- */
+/* ---------- la giornata ---------- */
+
+function gioEtichetta(iso){
+  var g=['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];
+  var m=['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
+  var p=iso.split('-'), d=new Date(+p[0],+p[1]-1,+p[2]);
+  var t=(iso===gioOggi())?'Oggi':g[d.getDay()];
+  return t+' '+d.getDate()+' '+m[d.getMonth()];
+}
+function gioPiuGiorni(iso,n){ var p=iso.split('-'), d=new Date(+p[0],+p[1]-1,+p[2]); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function gioLunedi(iso){ var p=iso.split('-'), d=new Date(+p[0],+p[1]-1,+p[2]); var g=d.getDay(); d.setDate(d.getDate()-(g===0?6:g-1)); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function gioCorto(iso){ var g=['dom','lun','mar','mer','gio','ven','sab']; var p=iso.split('-'), d=new Date(+p[0],+p[1]-1,+p[2]); return g[d.getDay()]+' '+d.getDate(); }
+function gioSposta(n){ gioData = gioPiuGiorni(gioData, n); gioLavori=[]; gioCaricata=''; gioSettimana=null; render(); }
 
 function renderGiornata(){
   if(!dipPin) return dipSchermataCodice();
-  return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-    + '<div style="flex:1;font-size:12px;color:#888">Codice di ' + dipEsc(dipNome) + '</div>'
-    + '<button onclick="dipEsci()" style="border:0.5px solid #e0e0e0;background:#fff;border-radius:14px;padding:5px 11px;font-size:11.5px;color:#888;cursor:pointer;font-family:inherit">cambia codice</button></div>'
-    + '<iframe src="' + DIP_API + '?pin=' + encodeURIComponent(dipPin) + '" '
-    + 'style="width:100%;height:78vh;border:0.5px solid #e0e0e0;border-radius:12px;background:#f5f5f5"></iframe>';
+  if(!gioData) gioData = gioOggi();
+  if(gioCaricata!==gioData && !gioCarico){ gioCaricaGiornata(); }
+
+  const daFare = gioLavori.filter(function(l){ return l.stato==='assegnata'; });
+  const chiusi = gioLavori.filter(function(l){ return l.stato && l.stato!=='assegnata'; });
+  const minuti = chiusi.reduce(function(s,l){ return s+(parseInt(l.minuti,10)||0); },0);
+
+  let h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+    + '<div style="flex:1;font-size:16px;font-weight:600">'+dipEsc(dipNome)+'</div>'
+    + '<button onclick="dipEsci()" style="border:0.5px solid #e0e0e0;background:#fff;border-radius:14px;padding:5px 11px;font-size:11.5px;color:#888;cursor:pointer;font-family:inherit">cambia codice</button></div>';
+
+  h += '<div style="display:flex;align-items:center;gap:8px;margin:8px 0 10px">'
+    + '<button onclick="gioSposta(-1)" style="background:#fff;border:0.5px solid #d8d8d8;border-radius:9px;width:40px;height:38px;font-size:17px;cursor:pointer;font-family:inherit">&lsaquo;</button>'
+    + '<div style="flex:1;text-align:center;font-size:13.5px;font-weight:600">'+gioEtichetta(gioData)+'</div>'
+    + '<button onclick="gioSposta(1)" style="background:#fff;border:0.5px solid #d8d8d8;border-radius:9px;width:40px;height:38px;font-size:17px;cursor:pointer;font-family:inherit">&rsaquo;</button></div>';
+
+  h += '<div style="background:#1a1a1a;color:#fff;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<span style="flex:1;font-size:12px;color:#bbb">Ore della giornata<br>'+chiusi.length+' lavorazioni chiuse</span>'
+    + '<span style="font-size:19px;font-weight:700">'+gioOre(minuti)+'</span></div>';
+
+  if(gioCarico) return h + '<div style="text-align:center;color:#aaa;padding:30px;font-size:13px">Carico...</div>';
+
+  h += '<div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#8a8a8a;margin:16px 3px 9px">DA FARE'+(daFare.length?' &middot; '+daFare.length:'')+'</div>';
+  if(!daFare.length){
+    h += '<div style="text-align:center;color:#aaa;font-size:13px;padding:20px 10px">'
+      + (chiusi.length ? 'Niente altro di assegnato per questo giorno.' : 'Nessuna mansione assegnata.<br>Segna tu quello che hai fatto, qui sotto.')
+      + '</div>';
+  }
+  daFare.forEach(function(l){ h += gioRiga(l); });
+
+  h += '<button class="btn-primary" style="margin-top:12px" onclick="gioApriAggiungi()">+ Aggiungi lavorazione</button>';
+
+  if(chiusi.length){
+    h += '<div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#8a8a8a;margin:18px 3px 9px">GIA&rsquo; SEGNATE</div>';
+    chiusi.forEach(function(l){ h += gioRiga(l); });
+  }
+  h += gioRiassunto();
+  return h;
+}
+
+function gioRiga(l){
+  const i = gioLavori.indexOf(l);
+  const fatta = l.stato==='fatta', saltata = l.stato==='non fatta';
+  const segno = fatta ? '&#10003;' : (saltata ? '!' : '');
+  const sfondo = fatta ? '#1f8a4c' : (saltata ? '#C8791A' : 'transparent');
+  const bordo = fatta ? '#1f8a4c' : (saltata ? '#C8791A' : '#c9c9c9');
+  let sotto = [];
+  if(l.sede) sotto.push(dipEsc(l.sede));
+  if(l.pianoDesc) sotto.push('#'+dipEsc(l.pianoNum)+' '+dipEsc(l.pianoDesc));
+  else if(l.estMarca) sotto.push('esterno: '+dipEsc(l.estMarca)+' '+dipEsc(l.estModello||''));
+  if(saltata && l.motivo) sotto.push('non fatta: '+dipEsc(l.motivo));
+  if(l.note) sotto.push(dipEsc(l.note));
+  return '<div onclick="gioApriChiusura('+i+')" style="display:flex;align-items:flex-start;gap:11px;background:#fff;border:0.5px solid #e0e0e0;border-radius:12px;padding:12px;margin-bottom:9px;cursor:pointer">'
+    + '<div style="width:22px;height:22px;border:1.5px solid '+bordo+';background:'+sfondo+';color:#fff;border-radius:6px;flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">'+segno+'</div>'
+    + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:500;line-height:1.3">'+dipEsc(l.lavorazione)+'</div>'
+    + (sotto.length?'<div style="font-size:11.5px;color:#999;margin-top:4px">'+sotto.join(' &middot; ')+'</div>':'')+'</div>'
+    + (l.minuti?'<div style="font-size:13px;font-weight:700;color:#A01020;white-space:nowrap">'+gioOre(l.minuti)+'</div>':'')
+    + '</div>';
+}
+
+async function gioCaricaGiornata(){
+  if(gioCarico || !dipPin) return;
+  gioCarico = true;
+  try{
+    const r = await dipChiedi('giornata', {pin:dipPin, data:gioData});
+    if(r.ok){ gioLavori = r.lavori||[]; gioCaricata = gioData; }
+  }catch(e){}
+  gioCarico = false;
+  render();
+  gioCaricaSettimana();
+}
+
+/* ---------- il riassunto della settimana ---------- */
+
+function gioRiassunto(){
+  if(!gioSettimana) return '<div id="gio-settimana"></div>';
+  const da = gioLunedi(gioData), a = gioPiuGiorni(da,6);
+  const fatte = gioSettimana.filter(function(l){ return l.stato==='fatta'; });
+  const saltate = gioSettimana.filter(function(l){ return l.stato==='non fatta'; }).length;
+  const totale = fatte.reduce(function(s,l){ return s+(parseInt(l.minuti,10)||0); },0);
+  let perGiorno={}, perCat={}, perSede={};
+  for(var i=0;i<7;i++) perGiorno[gioPiuGiorni(da,i)]={min:0};
+  fatte.forEach(function(l){
+    const g=String(l.data).slice(0,10), m=parseInt(l.minuti,10)||0;
+    if(perGiorno[g]) perGiorno[g].min += m;
+    perCat[l.categoria||'ALTRO'] = (perCat[l.categoria||'ALTRO']||0)+m;
+    perSede[l.sede||'-'] = (perSede[l.sede||'-']||0)+m;
+  });
+  let max=1; Object.keys(perGiorno).forEach(function(g){ if(perGiorno[g].min>max) max=perGiorno[g].min; });
+
+  let h = '<div id="gio-settimana"><div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#8a8a8a;margin:18px 3px 9px">LA MIA SETTIMANA</div>'
+    + '<div class="card">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px"><span style="font-size:12px;color:#999">'+gioCorto(da)+' &ndash; '+gioCorto(a)+'</span>'
+    + '<b style="margin-left:auto;font-size:19px;color:#A01020">'+gioOre(totale)+'</b></div>';
+  Object.keys(perGiorno).forEach(function(g){
+    const v=perGiorno[g], largo=Math.round((v.min/max)*100), qui=(g===gioData);
+    h += '<div style="display:flex;align-items:center;gap:9px;margin-bottom:6px">'
+      + '<span style="font-size:11.5px;color:'+(qui?'#A01020':'#999')+';width:46px;font-weight:'+(qui?'700':'400')+'">'+gioCorto(g)+'</span>'
+      + '<div style="flex:1;height:9px;background:#f0f0f0;border-radius:5px;overflow:hidden"><div style="width:'+largo+'%;height:100%;background:'+(v.min?'#A01020':'transparent')+'"></div></div>'
+      + '<span style="font-size:11.5px;color:#666;width:52px;text-align:right">'+(v.min?gioOre(v.min):'&mdash;')+'</span></div>';
+  });
+  h += '<div style="display:flex;gap:10px;margin-top:12px;font-size:11.5px;color:#888"><span>'+fatte.length+' lavorazioni</span>'
+    + (saltate?'<span style="color:#C8791A">'+saltate+' non fatte</span>':'')+'</div>';
+  const cats = Object.keys(perCat).sort(function(x,y){ return perCat[y]-perCat[x]; }).slice(0,5);
+  if(cats.length){
+    h += '<div style="border-top:0.5px solid #f0f0f0;margin-top:12px;padding-top:10px">';
+    cats.forEach(function(c){ h += '<div style="display:flex;font-size:12px;padding:3px 0"><span style="flex:1;color:#666;padding-right:10px">'+dipEsc(c)+'</span><b>'+gioOre(perCat[c])+'</b></div>'; });
+    h += '</div>';
+  }
+  const sedi = Object.keys(perSede).sort(function(x,y){ return perSede[y]-perSede[x]; });
+  if(sedi.length){
+    h += '<div style="border-top:0.5px solid #f0f0f0;margin-top:10px;padding-top:10px;display:flex;flex-wrap:wrap;gap:6px">';
+    sedi.forEach(function(s){ h += '<span style="background:#f5f5f5;border-radius:8px;padding:4px 9px;font-size:11px;color:#666">'+dipEsc(s)+' <b style="color:#1a1a1a">'+gioOre(perSede[s])+'</b></span>'; });
+    h += '</div>';
+  }
+  return h + '</div></div>';
+}
+
+async function gioCaricaSettimana(){
+  if(!dipPin) return;
+  const da = gioLunedi(gioData), a = gioPiuGiorni(da,6);
+  try{
+    const r = await dipChiedi('periodo', {pin:dipPin, da:da, a:a});
+    if(r.ok){ gioSettimana = r.lavori||[]; if(currentTab==='giornata') render(); }
+  }catch(e){}
+}
+
+/* ---------- il foglio che scorre su dalla base ---------- */
+
+function gioFoglio(html){
+  let v = document.getElementById('gio-velo');
+  if(!v){
+    v = document.createElement('div');
+    v.id = 'gio-velo';
+    v.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;z-index:9000';
+    v.onclick = function(e){ if(e.target===v) gioChiudi(); };
+    v.innerHTML = '<div id="gio-foglio" style="background:#f5f5f5;width:100%;max-width:520px;margin:0 auto;border-radius:16px 16px 0 0;padding:16px 14px 28px;max-height:92vh;overflow-y:auto"></div>';
+    document.body.appendChild(v);
+  }
+  document.getElementById('gio-foglio').innerHTML = html;
+  v.style.display = 'flex';
+}
+function gioChiudi(){ const v=document.getElementById('gio-velo'); if(v) v.style.display='none'; gioForm=null; }
+
+const GIO_MINUTI = [15,30,45,60,90,120,180,240];
+function gioTitolo(t){ return '<div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#8a8a8a;margin:14px 3px 9px">'+t+'</div>'; }
+function gioErrore(e){ return e ? '<div style="background:#fdeced;color:#A32D2D;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:10px">'+dipEsc(e)+'</div>' : ''; }
+function gioChip(testo, acceso, azione){
+  return '<button onclick="'+azione+'" style="border:0.5px solid '+(acceso?'#A01020':'#d8d8d8')+';background:'+(acceso?'rgba(160,16,32,.9)':'#fff')+';color:'+(acceso?'#fff':'#1a1a1a')+';border-radius:16px;padding:9px 14px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap">'+testo+'</button>';
+}
+const GIO_INPUT = 'width:100%;border:0.5px solid #d8d8d8;border-radius:10px;padding:12px;font-size:16px;font-family:inherit;background:#fff;outline:none';
+
+/* ---------- chiudere una lavorazione assegnata ---------- */
+
+function gioApriChiusura(i){
+  const l = gioLavori[i]; if(!l) return;
+  gioForm = {i:i, id:l.id, stato:'fatta', minuti:parseInt(l.minuti,10)||0, motivo:l.motivo||'', note:l.note||''};
+  gioDisegnaChiusura();
+}
+
+function gioDisegnaChiusura(errore){
+  const l = gioLavori[gioForm.i], f = gioForm;
+  let h = '<h2 style="font-size:16px;font-weight:600;margin-bottom:3px">'+dipEsc(l.lavorazione)+'</h2>'
+    + '<div style="font-size:12px;color:#999;margin-bottom:14px">'+dipEsc(l.sede||'')+(l.pianoDesc?' &middot; #'+dipEsc(l.pianoNum)+' '+dipEsc(l.pianoDesc):'')+'</div>'
+    + gioErrore(errore)
+    + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+    + gioChip('L&rsquo;ho fatta', f.stato==='fatta', "gioForm.stato='fatta';gioDisegnaChiusura()")
+    + gioChip('Non l&rsquo;ho fatta', f.stato==='non fatta', "gioForm.stato='non fatta';gioDisegnaChiusura()")
+    + '</div>';
+  if(f.stato==='fatta'){
+    h += gioTitolo('QUANTO TEMPO') + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+      + GIO_MINUTI.map(function(m){ return gioChip(gioOre(m), f.minuti===m, 'gioForm.minuti='+m+';gioDisegnaChiusura()'); }).join('') + '</div>'
+      + '<input type="number" inputmode="numeric" placeholder="minuti" value="'+(f.minuti||'')+'" oninput="gioForm.minuti=parseInt(this.value,10)||0" style="'+GIO_INPUT+'">';
+  } else {
+    h += gioTitolo('PERCHE&rsquo; NON E&rsquo; STATA FATTA')
+      + '<textarea placeholder="Scrivi il motivo" oninput="gioForm.motivo=this.value" style="'+GIO_INPUT+';min-height:70px">'+dipEsc(f.motivo)+'</textarea>';
+  }
+  h += gioTitolo('NOTE') + '<textarea placeholder="facoltative" oninput="gioForm.note=this.value" style="'+GIO_INPUT+';min-height:70px">'+dipEsc(f.note)+'</textarea>'
+    + '<button class="btn-primary" id="gio-salva" style="margin-top:14px" onclick="gioSalvaChiusura()">Salva</button>'
+    + '<button onclick="gioChiudi()" style="width:100%;margin-top:8px;background:#fff;border:0.5px solid #d8d8d8;border-radius:11px;padding:13px;font-size:15px;font-family:inherit;cursor:pointer">Annulla</button>';
+  gioFoglio(h);
+}
+
+async function gioSalvaChiusura(){
+  const b = document.getElementById('gio-salva'); if(b){ b.disabled=true; b.textContent='Salvo...'; }
+  try{
+    const r = await dipChiedi('chiudi', {pin:dipPin, id:gioForm.id, stato:gioForm.stato, minuti:gioForm.minuti, motivo:gioForm.motivo, note:gioForm.note});
+    if(!r.ok){ if(b){ b.disabled=false; b.textContent='Salva'; } return gioDisegnaChiusura(r.errore); }
+    gioChiudi(); gioLavori=[]; gioCaricata=''; gioSettimana=null; render();
+  }catch(e){ if(b){ b.disabled=false; b.textContent='Salva'; } gioDisegnaChiusura('Collegamento non riuscito'); }
+}
+
+/* ---------- aggiungere una lavorazione ---------- */
+
+function gioApriAggiungi(){
+  gioForm = {sede:'', categoria:'', lavorazione:'', libera:'', cerca:'', cercaP:'',
+             modo:'nessuno', pianoNum:'', pianoDesc:'',
+             estMarca:'', estModello:'', estMatricola:'', estTipo:'', minuti:0, note:''};
+  if(!gioListini) gioCaricaListini();
+  gioDisegnaAggiungi();
+}
+
+async function gioCaricaListini(){
+  try{
+    const r = await dipChiedi('listini', {pin:dipPin});
+    if(r.ok){ gioListini = r; if(gioForm) gioDisegnaAggiungi(); }
+  }catch(e){}
+}
+
+function gioDisegnaAggiungi(errore){
+  const f = gioForm;
+  let h = '<h2 style="font-size:16px;font-weight:600;margin-bottom:3px">Aggiungi lavorazione</h2>'
+    + '<div style="font-size:12px;color:#999;margin-bottom:14px">'+gioEtichetta(gioData)+'</div>'
+    + gioErrore(errore);
+
+  if(!gioListini) return gioFoglio(h + '<div style="text-align:center;color:#aaa;padding:30px;font-size:13px">Carico l&rsquo;elenco...</div>');
+
+  h += gioTitolo('DOVE') + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+    + (gioListini.sedi||[]).map(function(s){ return gioChip(dipEsc(s), f.sede===s, "gioForm.sede='"+s.replace(/'/g,"\\'")+"';gioDisegnaAggiungi()"); }).join('')
+    + '</div>';
+
+  const cats = Object.keys(gioListini.lavorazioni||{});
+  h += gioTitolo('CHE COSA') + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+    + cats.map(function(c){ return gioChip(dipEsc(c), f.categoria===c, "gioForm.categoria='"+c.replace(/'/g,"\\'")+"';gioForm.lavorazione='';gioForm.cerca='';gioDisegnaAggiungi()"); }).join('')
+    + '</div>';
+
+  if(f.categoria){
+    let voci = (gioListini.lavorazioni[f.categoria]||[]).slice();
+    const q = (f.cerca||'').toUpperCase();
+    if(q) voci = voci.filter(function(v){ return v.toUpperCase().indexOf(q)>=0; });
+    h += '<input placeholder="cerca nella categoria" value="'+dipEsc(f.cerca)+'" oninput="gioForm.cerca=this.value;gioDisegnaAggiungi()" style="'+GIO_INPUT+';margin-bottom:8px">';
+    h += '<div style="max-height:40vh;overflow-y:auto;background:#fff;border:0.5px solid #e0e0e0;border-radius:11px">'
+      + voci.map(function(v){
+          const sel = f.lavorazione===v ? 'background:#fdeced;font-weight:600;' : '';
+          return '<div onclick="gioForm.lavorazione=\''+v.replace(/'/g,"\\'")+'\';gioDisegnaAggiungi()" style="'+sel+'padding:12px 13px;border-bottom:0.5px solid #f0f0f0;font-size:13.5px;cursor:pointer">'+dipEsc(v)+'</div>';
+        }).join('')
+      + '<div onclick="gioForm.lavorazione=\'ALTRO\';gioDisegnaAggiungi()" style="padding:12px 13px;font-size:13.5px;cursor:pointer;color:#A01020;font-weight:600">ALTRO &mdash; scrivo io</div></div>';
+    if(f.lavorazione==='ALTRO'){
+      h += '<input placeholder="scrivi la lavorazione" value="'+dipEsc(f.libera)+'" oninput="gioForm.libera=this.value" style="'+GIO_INPUT+';margin-top:8px">'
+        + '<div style="font-size:11.5px;color:#999;margin:6px 3px 0">Quello che scrivi qui entra nell&rsquo;elenco: la prossima volta lo trovi gia&rsquo; pronto.</div>';
+    }
+  }
+
+  h += gioTitolo('SU QUALE PIANOFORTE') + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+    + gioChip('nessuno', f.modo==='nessuno', "gioForm.modo='nessuno';gioDisegnaAggiungi()")
+    + gioChip('dei nostri', f.modo==='nostro', "gioForm.modo='nostro';gioDisegnaAggiungi()")
+    + gioChip('esterno', f.modo==='esterno', "gioForm.modo='esterno';gioDisegnaAggiungi()")
+    + '</div>';
+
+  if(f.modo==='esterno'){
+    h += '<input placeholder="marca" value="'+dipEsc(f.estMarca)+'" oninput="gioForm.estMarca=this.value" style="'+GIO_INPUT+'">'
+      + '<input placeholder="modello" value="'+dipEsc(f.estModello)+'" oninput="gioForm.estModello=this.value" style="'+GIO_INPUT+';margin-top:8px">'
+      + '<input placeholder="matricola" value="'+dipEsc(f.estMatricola)+'" oninput="gioForm.estMatricola=this.value" style="'+GIO_INPUT+';margin-top:8px">'
+      + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:9px">'
+      + gioChip('verticale', f.estTipo==='VERTICALE', "gioForm.estTipo='VERTICALE';gioDisegnaAggiungi()")
+      + gioChip('coda', f.estTipo==='CODA', "gioForm.estTipo='CODA';gioDisegnaAggiungi()")
+      + '</div>';
+  } else if(f.modo==='nostro' && f.pianoNum){
+    h += '<div class="card" style="padding:11px 12px;display:flex;align-items:center;gap:9px"><b>#'+dipEsc(f.pianoNum)+'</b>'
+      + '<span style="flex:1">'+dipEsc(f.pianoDesc)+'</span>'
+      + gioChip('cambia', false, "gioForm.pianoNum='';gioForm.pianoDesc='';gioDisegnaAggiungi()") + '</div>';
+  } else if(f.modo==='nostro'){
+    const pf = gioListini.pianoforti || [];
+    h += '<input placeholder="numero, marca, modello o matricola" value="'+dipEsc(f.cercaP)+'" oninput="gioForm.cercaP=this.value;gioDisegnaAggiungi()" style="'+GIO_INPUT+'">';
+    const qp = (f.cercaP||'').toUpperCase();
+    const trovati = qp ? pf.filter(function(p){ return (String(p.numero)+' '+(p.marca||'')+' '+(p.modello||'')+' '+(p.matricola||'')).toUpperCase().indexOf(qp)>=0; }).slice(0,25) : [];
+    if(trovati.length){
+      h += '<div style="max-height:34vh;overflow-y:auto;background:#fff;border:0.5px solid #e0e0e0;border-radius:11px;margin-top:8px">'
+        + trovati.map(function(p){
+            const d = ((p.marca||'')+' '+(p.modello||'')).trim();
+            return '<div onclick="gioScegliPiano(\''+String(p.numero)+'\',\''+d.replace(/'/g,"\\'")+'\')" style="padding:12px 13px;border-bottom:0.5px solid #f0f0f0;font-size:13.5px;cursor:pointer">'
+              + '<b>#'+dipEsc(p.numero)+'</b> '+dipEsc(d)+(p.matricola?' <span style="color:#bbb">'+dipEsc(p.matricola)+'</span>':'')+'</div>';
+          }).join('') + '</div>';
+    } else if(qp){ h += '<div style="font-size:11.5px;color:#999;margin:6px 3px 0">nessun pianoforte trovato</div>'; }
+  }
+
+  h += gioTitolo('QUANTO TEMPO') + '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'
+    + GIO_MINUTI.map(function(m){ return gioChip(gioOre(m), f.minuti===m, 'gioForm.minuti='+m+';gioDisegnaAggiungi()'); }).join('') + '</div>'
+    + '<input type="number" inputmode="numeric" placeholder="minuti" value="'+(f.minuti||'')+'" oninput="gioForm.minuti=parseInt(this.value,10)||0" style="'+GIO_INPUT+'">';
+
+  h += gioTitolo('NOTE') + '<textarea placeholder="facoltative" oninput="gioForm.note=this.value" style="'+GIO_INPUT+';min-height:70px">'+dipEsc(f.note)+'</textarea>'
+    + '<button class="btn-primary" id="gio-salva" style="margin-top:14px" onclick="gioSalvaAggiunta()">Segna come fatta</button>'
+    + '<button onclick="gioChiudi()" style="width:100%;margin-top:8px;background:#fff;border:0.5px solid #d8d8d8;border-radius:11px;padding:13px;font-size:15px;font-family:inherit;cursor:pointer">Annulla</button>';
+  gioFoglio(h);
+}
+
+function gioScegliPiano(num, desc){ gioForm.pianoNum=num; gioForm.pianoDesc=desc; gioDisegnaAggiungi(); }
+
+async function gioSalvaAggiunta(){
+  const f = gioForm;
+  const voce = f.lavorazione==='ALTRO' ? (f.libera||'').trim() : f.lavorazione;
+  if(!f.sede) return gioDisegnaAggiungi('Scegli dove hai lavorato');
+  if(!voce) return gioDisegnaAggiungi('Scegli la lavorazione');
+  if(!f.minuti) return gioDisegnaAggiungi('Manca il tempo impiegato');
+  const nostro = f.modo==='nostro', fuori = f.modo==='esterno';
+  const b = document.getElementById('gio-salva'); if(b){ b.disabled=true; b.textContent='Salvo...'; }
+  try{
+    const r = await dipChiedi('aggiungi', {pin:dipPin, data:gioData, sede:f.sede, categoria:f.categoria, lavorazione:voce,
+      pianoNum:nostro?f.pianoNum:'', pianoDesc:nostro?f.pianoDesc:'',
+      estMarca:fuori?f.estMarca:'', estModello:fuori?f.estModello:'',
+      estMatricola:fuori?f.estMatricola:'', estTipo:fuori?f.estTipo:'', minuti:f.minuti, note:f.note});
+    if(!r.ok){ if(b){ b.disabled=false; b.textContent='Segna come fatta'; } return gioDisegnaAggiungi(r.errore); }
+    gioChiudi(); gioListini=null; gioLavori=[]; gioCaricata=''; gioSettimana=null; render();
+  }catch(e){ if(b){ b.disabled=false; b.textContent='Segna come fatta'; } gioDisegnaAggiungi('Collegamento non riuscito'); }
 }
 
 /* ---------- disponibilita': solo marca, modello, matricola ---------- */
@@ -1710,34 +2027,25 @@ function renderDisponibilita(){
     if(!dipCaricamento){ dipCaricaPianoforti(); }
     return '<div style="text-align:center;color:#aaa;padding:34px;font-size:13px">Carico gli strumenti...</div>';
   }
-  const gruppo = dipPianoforti.filter(function(p){ return String(p.stato).toUpperCase() === dipStato; });
+  const gruppo = dipPianoforti.filter(function(p){ return String(p.stato).toUpperCase()===dipStato; });
   const q = (dipCerca||'').toUpperCase();
-  const lista = q ? gruppo.filter(function(p){
-      return ((p.marca||'')+' '+(p.modello||'')+' '+(p.matricola||'')).toUpperCase().indexOf(q) >= 0;
-    }) : gruppo;
-
+  const lista = q ? gruppo.filter(function(p){ return ((p.marca||'')+' '+(p.modello||'')+' '+(p.matricola||'')).toUpperCase().indexOf(q)>=0; }) : gruppo;
   const conta = function(s){ return dipPianoforti.filter(function(p){ return String(p.stato).toUpperCase()===s; }).length; };
+
   let h = '<div style="display:flex;gap:7px;margin-bottom:10px">'
     + ['N','D'].map(function(s){
-        const on = dipStato===s;
-        const et = s==='N' ? 'Noleggio' : 'Deposito';
+        const on = dipStato===s, et = s==='N' ? 'Noleggio' : 'Deposito';
         return '<button onclick="dipStato=\''+s+'\';dipCerca=\'\';render()" style="flex:1;text-align:center;padding:9px 4px;border-radius:9px;font-size:12px;font-weight:600;line-height:1.25;cursor:pointer;font-family:inherit;border:0.5px solid '
           +(on?'#A01020':'#e0e0e0')+';background:'+(on?'rgba(160,16,32,0.9)':'#fff')+';color:'+(on?'#fff':'#999')+'">'
           + et + '<span style="display:block;font-size:15px;font-weight:700;margin-top:1px">'+conta(s)+'</span></button>';
-      }).join('')
-    + '</div>';
-
-  h += '<input id="dip-cerca" placeholder="marca, modello o matricola" value="'+dipEsc(dipCerca)+'" oninput="dipCerca=this.value;render()" '
-    + 'style="width:100%;padding:10px 11px;border:0.5px solid #e0e0e0;border-radius:9px;font-size:14px;outline:none;margin-bottom:10px">';
+      }).join('') + '</div>';
+  h += '<input placeholder="marca, modello o matricola" value="'+dipEsc(dipCerca)+'" oninput="dipCerca=this.value;render()" style="'+GIO_INPUT+';font-size:14px;padding:10px 11px;margin-bottom:10px">';
   h += '<div style="font-size:12px;color:#888;margin-bottom:8px">'+lista.length+' strumenti</div>';
-
   if(!lista.length) return h + '<div style="text-align:center;color:#aaa;padding:26px;font-size:13px">Nessuno strumento trovato</div>';
-
   h += lista.slice(0,300).map(function(p){
     return '<div style="background:#fff;border:0.5px solid #e0e0e0;border-radius:11px;padding:11px 12px;margin-bottom:8px">'
       + '<div style="font-size:14px;font-weight:600">'+dipEsc((p.marca||'').trim())+' '+dipEsc(p.modello||'')+'</div>'
-      + '<div style="font-size:12px;color:#888;margin-top:3px">matricola '+(p.matricola?dipEsc(p.matricola):'&mdash;')+'</div>'
-      + '</div>';
+      + '<div style="font-size:12px;color:#888;margin-top:3px">matricola '+(p.matricola?dipEsc(p.matricola):'&mdash;')+'</div></div>';
   }).join('');
   if(lista.length>300) h += '<div style="text-align:center;color:#aaa;font-size:12px;padding:6px">mostrati i primi 300</div>';
   return h;
@@ -1748,10 +2056,7 @@ async function dipCaricaPianoforti(){
   dipCaricamento = true;
   try{
     const r = await dipChiedi('listini', {pin:dipPin});
-    if(r.ok) dipPianoforti = (r.pianoforti||[]).filter(function(p){
-      const s = String(p.stato).toUpperCase();
-      return s==='N' || s==='D';
-    });
+    if(r.ok) dipPianoforti = (r.pianoforti||[]).filter(function(p){ const s=String(p.stato).toUpperCase(); return s==='N'||s==='D'; });
   }catch(e){}
   dipCaricamento = false;
   render();
@@ -1762,6 +2067,7 @@ async function dipCaricaPianoforti(){
 // viene buttato e la sezione torna a chiederlo.
 (function(){
   dipPin = dipLeggi('pf_pin_dip');
+  gioData = gioOggi();
   if(!dipPin) return;
   dipChiedi('entra',{pin:dipPin}).then(function(r){
     if(r && r.ok){ dipNome = r.dipendente.nome; if(currentTab==='giornata'||currentTab==='dispo') render(); }
